@@ -1,29 +1,29 @@
 import 'package:flutter/material.dart';
 
+import 'models/route.dart';
 import 'models/station.dart';
+import 'repositories/transit_repositories.dart';
 import 'services/transit_api.dart';
 
-void main() {
-  runApp(const MyTransitApp());
-}
+void main() => runApp(const MyApp());
 
-class MyTransitApp extends StatelessWidget {
-  const MyTransitApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'MyTransit',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blue,
-        ),
-        useMaterial3: true,
-      ),
+      theme: ThemeData(colorScheme: .fromSeed(seedColor: Colors.indigo)),
       home: const StationPage(),
     );
   }
+}
+
+class _Data {
+  final List<TransitRoute> routes;
+  final List<Station> stations;
+  _Data(this.routes, this.stations);
 }
 
 class StationPage extends StatefulWidget {
@@ -34,68 +34,75 @@ class StationPage extends StatefulWidget {
 }
 
 class _StationPageState extends State<StationPage> {
-  final TransitService transitService = TransitService();
+  final _repo = TransitRepository(TransitApi());
+  late final Future<_Data> _future = _load();
 
-  late Future<List<Station>> stationsFuture;
-
-  @override
-  void initState() {
-    super.initState();
-
-    stationsFuture = transitService.fetchStations();
-  }
+  Future<_Data> _load() async =>
+      _Data(await _repo.getRoutes(), await _repo.getStations());
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('MyTransit'),
-      ),
-      body: FutureBuilder<List<Station>>(
-        future: stationsFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
+      appBar: AppBar(title: const Text('MyTransit')),
+      body: FutureBuilder<_Data>(
+        future: _future,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
           }
-
-          if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  'Error:\n${snapshot.error}',
-                  textAlign: TextAlign.center,
+          if (snap.hasError) {
+            return Center(child: Text('Failed to load: ${snap.error}'));
+          }
+          final data = snap.data!;
+          return ListView(
+            children: [
+              for (final route in data.routes)
+                _RouteSection(
+                  route: route,
+                  stations: data.stations
+                      .where((s) => s.routeId == route.id)
+                      .toList(),
                 ),
-              ),
-            );
-          }
-
-          final stations = snapshot.data ?? [];
-
-          if (stations.isEmpty) {
-            return const Center(
-              child: Text('No stations found.'),
-            );
-          }
-
-          return ListView.builder(
-            itemCount: stations.length,
-            itemBuilder: (context, index) {
-              final station = stations[index];
-
-              return ListTile(
-                leading: const Icon(Icons.train),
-                title: Text(station.name),
-                subtitle: Text(
-                  '${station.latitude}, ${station.longitude}',
-                ),
-              );
-            },
+            ],
           );
         },
       ),
+    );
+  }
+}
+
+class _RouteSection extends StatelessWidget {
+  const _RouteSection({required this.route, required this.stations});
+  final TransitRoute route;
+  final List<Station> stations;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExpansionTile(
+      leading: CircleAvatar(
+        backgroundColor: Color(route.colorValue),
+        child: Text(
+          route.shortName,
+          style: TextStyle(
+            color: Color(route.textColorValue),
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+      title: Text(route.longName),
+      subtitle: Text('${route.description} · ${stations.length} stations'),
+      children: [
+        for (final s in stations)
+          ListTile(
+            dense: true,
+            title: Text(s.name),
+            subtitle: Text(s.id),
+            trailing: s.isAccessible
+                ? const Icon(Icons.accessible, size: 18)
+                : null,
+          ),
+      ],
     );
   }
 }
