@@ -1,0 +1,107 @@
+MYTRANSIT - TODO
+
+PROJECT STATUS
+Current stage: API Integration
+
+=============================
+PROJECT SETUP
+=============================
+
+[✓] Create Flutter project
+[ ] Configure project structure
+[ ] Add required dependencies
+[ ] Configure environment/API settings
+
+=============================
+TRANSIT DATA
+=============================
+
+[ ] Identify Malaysian transit API
+[ ] Test API endpoints
+[ ] Inspect JSON responses
+[ ] Identify available transit data
+[ ] Document API endpoints
+
+=============================
+API INTEGRATION
+=============================
+
+[ ] Create Station model
+[ ] Create Route model
+[ ] Create Arrival model
+[ ] Create ServiceStatus model
+[ ] Create Transit API service
+[ ] Fetch station data
+[ ] Display real station data
+
+=============================
+STATION
+=============================
+
+[ ] Station list
+[ ] Station details
+[ ] Route information
+[ ] Upcoming arrivals
+[ ] Service status
+[ ] Estimated fare
+
+=============================
+HOME
+=============================
+
+[ ] Nearby stations
+[ ] Favourite routes
+[ ] Service status
+[ ] Recent journeys
+
+=============================
+USER FEATURES
+=============================
+
+[ ] Favourite stations
+[ ] Favourite routes
+[ ] Recent journeys
+[ ] Local storage
+
+=============================
+LOCATION
+=============================
+
+[ ] Request location permission
+[ ] Get current location
+[ ] Calculate station distance
+[ ] Sort nearby stations
+[ ] Map integration
+
+=============================
+JOURNEY PLANNER
+=============================
+
+[ ] Select origin
+[ ] Select destination
+[ ] Find route
+[ ] Show transfers
+[ ] Estimate journey time
+[ ] Estimate fare
+
+=============================
+BACKEND
+=============================
+
+[ ] Laravel API
+[ ] MySQL database
+[ ] User authentication
+[ ] Favourite synchronization
+[ ] Journey history synchronization
+
+=============================
+POLISH
+=============================
+
+[ ] Loading states
+[ ] Empty states
+[ ] Error handling
+[ ] Offline caching
+[ ] Pull-to-refresh
+[ ] Notifications
+[ ] Dark mode
