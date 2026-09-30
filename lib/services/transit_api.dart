@@ -1,115 +1,57 @@
-import 'dart:convert';
+import 'package:flutter/services.dart' show rootBundle;
 
-import 'package:archive/archive.dart';
-import 'package:csv/csv.dart';
-import 'package:http/http.dart' as http;
-
-import '../models/route.dart';
-import '../models/station.dart';
-
-class TransitService {
-  static const String gtfsUrl =
-      'https://api.data.gov.my/gtfs-static/prasarana?category=rapid-rail-kl';
-
-  Archive? _archive;
-
-  Future<Archive> _getArchive() async {
-    if (_archive != null) {
-      return _archive!;
-    }
-
-    final response = await http.get(Uri.parse(gtfsUrl));
-
-    if (response.statusCode != 200) {
-      throw Exception(
-        'Failed to download transit data: ${response.statusCode}',
-      );
-    }
-
-    _archive = ZipDecoder().decodeBytes(response.bodyBytes);
-
-    return _archive!;
+/// Reads raw GTFS files. Swap this for an HTTP download later.
+class TransitApi {
+  Future<List<Map<String, String>>> readTable(String file) async {
+    var text = await rootBundle.loadString('GTFS/$file');
+    if (text.startsWith('\uFEFF')) text = text.substring(1); // strip BOM
+    final rows = _parseCsv(text);
+    if (rows.isEmpty) return [];
+    final header = rows.first.map((e) => e.trim()).toList();
+    return [
+      for (final r in rows.skip(1))
+        if (r.length >= header.length)
+          {for (var i = 0; i < header.length; i++) header[i]: r[i].trim()},
+    ];
   }
 
-  List<Map<String, dynamic>> _readCsvFile(
-      Archive archive,
-      String fileName,
-      ) {
-    final file = archive.findFile(fileName);
+  List<List<String>> _parseCsv(String text) {
+    final rows = <List<String>>[];
+    var row = <String>[];
+    final field = StringBuffer();
+    var inQuotes = false;
 
-    if (file == null) {
-      throw Exception('$fileName was not found in the GTFS feed.');
-    }
-
-    final text = utf8.decode(file.content as List<int>);
-
-    final cleanedText = text.replaceFirst('\uFEFF', '');
-
-    final rows = const CsvDecoder().convert(cleanedText);
-
-    if (rows.isEmpty) {
-      return [];
-    }
-
-    final headers = rows.first
-        .map((value) => value.toString())
-        .toList();
-
-    return rows.skip(1).map((row) {
-      final map = <String, dynamic>{};
-
-      for (int i = 0; i < headers.length; i++) {
-        if (i < row.length) {
-          map[headers[i]] = row[i];
+    for (var i = 0; i < text.length; i++) {
+      final c = text[i];
+      if (inQuotes) {
+        if (c == '"') {
+          if (i + 1 < text.length && text[i + 1] == '"') {
+            field.write('"');
+            i++;
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          field.write(c);
         }
-      }
-
-      return map;
-    }).toList();
-  }
-
-  Future<List<Station>> fetchStations() async {
-    final archive = await _getArchive();
-
-    final rows = _readCsvFile(
-      archive,
-      'stops.txt',
-    );
-
-    final stations = <Station>[];
-
-    for (final row in rows) {
-      try {
-        stations.add(
-          Station(
-            id: row['stop_id'].toString(),
-            name: row['stop_name'].toString(),
-            latitude: double.parse(
-              row['stop_lat'].toString(),
-            ),
-            longitude: double.parse(
-              row['stop_lon'].toString(),
-            ),
-          ),
-        );
-      } catch (_) {
-        // Skip invalid station records.
+      } else if (c == '"') {
+        inQuotes = true;
+      } else if (c == ',') {
+        row.add(field.toString());
+        field.clear();
+      } else if (c == '\n') {
+        row.add(field.toString());
+        field.clear();
+        rows.add(row);
+        row = <String>[];
+      } else if (c != '\r') {
+        field.write(c);
       }
     }
-
-    return stations;
-  }
-
-  Future<List<TransitRoute>> fetchRoutes() async {
-    final archive = await _getArchive();
-
-    final rows = _readCsvFile(
-      archive,
-      'routes.txt',
-    );
-
-    return rows.map((row) {
-      return TransitRoute.fromCsv(row);
-    }).toList();
+    if (field.isNotEmpty || row.isNotEmpty) {
+      row.add(field.toString());
+      rows.add(row);
+    }
+    return rows;
   }
 }
