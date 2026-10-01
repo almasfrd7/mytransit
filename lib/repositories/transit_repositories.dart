@@ -10,9 +10,19 @@ class TransitRepository {
   List<Station>? _stations;
   List<TransitRoute>? _routes;
 
+  /// stops.txt tags Kajang Line stops as route_id "MRT", but routes.txt
+  /// calls that line "KGL". Normalise it here.
+  Map<String, String> _fixRow(Map<String, String> r) {
+    if ((r['stop_id'] ?? '').startsWith('KG') && r['route_id'] == 'MRT') {
+      return {...r, 'route_id': 'KGL'};
+    }
+    return r;
+  }
+
   Future<List<Station>> getStations() async {
     return _stations ??= (await _api.readTable('stops.txt'))
         .where((r) => r['status'] == 'valid')
+        .map(_fixRow)
         .map(Station.fromRow)
         .toList();
   }
@@ -46,6 +56,8 @@ class TransitRepository {
       minutes: now.minute,
       seconds: now.second,
     );
+
+
 
     final trips = {
       for (final t in await _api.readTable('trips.txt'))
