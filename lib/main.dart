@@ -7,6 +7,7 @@ import 'models/route.dart';
 import 'models/station.dart';
 import 'repositories/transit_repositories.dart';
 import 'services/transit_api.dart';
+import 'widgets/live_clock.dart';
 
 void main() => runApp(const MyApp());
 
@@ -151,6 +152,12 @@ class _StationPageState extends State<StationPage> {
           body: CustomScrollView(
             slivers: [
               const SliverAppBar.large(title: Text('MyTransit')),
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: LiveClock(),
+                ),
+              ),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -418,7 +425,8 @@ class StationDetailPage extends StatefulWidget {
 
 class _StationDetailPageState extends State<StationDetailPage> {
   late Future<List<Arrival>> _arrivals = _fetch();
-  Timer? _timer;
+  Timer? _timer; // refetches arrivals
+  Timer? _tick; // refreshes the "x min" labels every second
 
   Future<List<Arrival>> _fetch() =>
       widget.repo.getNextArrivals(widget.station.id, limit: 6);
@@ -429,11 +437,15 @@ class _StationDetailPageState extends State<StationDetailPage> {
     _timer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() => _arrivals = _fetch());
     });
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _tick?.cancel();
     super.dispose();
   }
 
@@ -495,6 +507,8 @@ class _StationDetailPageState extends State<StationDetailPage> {
             padding: const EdgeInsets.all(16),
             sliver: SliverList.list(
               children: [
+                const LiveClock(),
+                const SizedBox(height: 16),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
