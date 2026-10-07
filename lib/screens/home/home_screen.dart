@@ -310,7 +310,7 @@ class _NetworkCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Klang Valley rail network',
+                          'Klang Valley + KTMB rail network',
                           style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                 fontWeight: FontWeight.w600,
                               ),

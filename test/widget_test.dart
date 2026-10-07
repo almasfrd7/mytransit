@@ -43,10 +43,7 @@ void main() {
     await settle(tester);
     expect(find.text('Live track'), findsWidgets);
     expect(find.textContaining('stations ·'), findsOneWidget);
-    expect(
-      find.textContaining('live GPS is coming soon'),
-      findsOneWidget,
-    );
+    expect(find.text('Live vehicles'), findsOneWidget);
 
     await tester.pageBack();
     await settle(tester);
@@ -54,7 +51,8 @@ void main() {
     // → Settings: theme switch actually re-themes the app
     await tester.tap(find.text('Settings'));
     await settle(tester);
-    expect(find.text('Bundled GTFS feed · Klang Valley rail'), findsOneWidget);
+    expect(find.text('Bundled GTFS feed · Klang Valley + KTMB rail'),
+        findsOneWidget);
 
     await tester.tap(find.text('Dark'));
     await tester.pump(const Duration(milliseconds: 400));

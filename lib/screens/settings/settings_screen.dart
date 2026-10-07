@@ -90,13 +90,15 @@ class SettingsScreen extends StatelessWidget {
                 ListTile(
                   leading: Icon(Icons.dataset_outlined),
                   title: Text('Data source'),
-                  subtitle: Text('Bundled GTFS feed · Klang Valley rail'),
+                  subtitle:
+                      Text('Bundled GTFS feed · Klang Valley + KTMB rail'),
                 ),
                 Divider(height: 1, indent: 16, endIndent: 16),
                 ListTile(
                   leading: Icon(Icons.schedule_outlined),
                   title: Text('Times are scheduled'),
-                  subtitle: Text('Live vehicle positions are not enabled yet'),
+                  subtitle:
+                      Text('Live positions come from KTMB GTFS-Realtime'),
                 ),
               ],
             ),

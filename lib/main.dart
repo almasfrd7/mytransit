@@ -23,3 +23,8 @@ class MyApp extends StatelessWidget {
     );
   }
 }
+
+// TODO: expose live polling through a top-level repository so screens don't
+// each create their own TransitRepository(TransitApi()). Once a single repo
+// instance is shared (e.g. a repository locator or Provider), start the KTMB
+// poll in main() and wire live positions into the Live track screen.
