@@ -1,9 +1,17 @@
+import 'dart:convert';
+
 import 'package:flutter/services.dart' show rootBundle;
 
 /// Reads raw GTFS files. Swap this for an HTTP download later.
 class TransitApi {
   Future<List<Map<String, String>>> readTable(String file) async {
-    var text = await rootBundle.loadString('GTFS/$file');
+    // Decode directly: loadString() routes files >50KB through compute(),
+    // which never completes inside fake-async widget tests.
+    final bytes = await rootBundle.load('GTFS/$file');
+    var text = utf8.decode(bytes.buffer.asUint8List(
+      bytes.offsetInBytes,
+      bytes.lengthInBytes,
+    ));
     if (text.startsWith('\uFEFF')) text = text.substring(1); // strip BOM
     final rows = _parseCsv(text);
     if (rows.isEmpty) return [];

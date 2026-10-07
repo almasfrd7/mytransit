@@ -37,3 +37,4 @@ flutter:
     - GTFS/routes.txt
     - GTFS/trips.txt
     - GTFS/stop_times.txt
+    - GTFS/shapes.txt

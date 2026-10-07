@@ -37,6 +37,37 @@ class TransitRepository {
   Future<List<Station>> getStationsForRoute(String routeId) async =>
       (await getStations()).where((s) => s.routeId == routeId).toList();
 
+  /// Shape polylines for [routeId] (lon/lat), keyed by shape_id and ordered
+  /// by shape_pt_sequence. A route usually has two (one per direction).
+  Future<Map<String, List<({double lng, double lat})>>> getShapesForRoute(
+      String routeId) async {
+    final shapeIds = <String>{};
+    for (final t in await _api.readTable('trips.txt')) {
+      if (t['route_id'] != routeId) continue;
+      final id = t['shape_id'];
+      if (id != null && id.isNotEmpty) shapeIds.add(id);
+    }
+    if (shapeIds.isEmpty) return {};
+
+    final points = <String, Map<int, ({double lng, double lat})>>{};
+    for (final p in await _api.readTable('shapes.txt')) {
+      final id = p['shape_id'];
+      if (id == null || !shapeIds.contains(id)) continue;
+      final lng = double.tryParse(p['shape_pt_lon'] ?? '');
+      final lat = double.tryParse(p['shape_pt_lat'] ?? '');
+      final seq = int.tryParse(p['shape_pt_sequence'] ?? '');
+      if (lng == null || lat == null || seq == null) continue;
+      (points[id] ??= {})[seq] = (lng: lng, lat: lat);
+    }
+
+    return {
+      for (final e in points.entries)
+        e.key: [
+          for (final seq in e.value.keys.toList()..sort()) e.value[seq]!,
+        ],
+    };
+  }
+
   static String _serviceId(DateTime d) => switch (d.weekday) {
     DateTime.saturday => 'Sat',
     DateTime.sunday => 'Sun',
