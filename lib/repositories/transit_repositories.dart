@@ -1,7 +1,9 @@
 import '../models/arrival.dart';
 import '../models/gtfs_realtime.dart';
 import '../models/route.dart';
+import '../models/service_status.dart';
 import '../models/station.dart';
+import '../services/advisory_service.dart';
 import '../services/gtfs_realtime_service.dart';
 import '../services/transit_api.dart';
 
@@ -30,6 +32,7 @@ class _ScheduleIndex {
     required this.byStop,
     required this.trips,
     required this.tripStart,
+    required this.tripEnd,
     required this.tripLastSeq,
     required this.tripLastStop,
     required this.freqs,
@@ -39,6 +42,7 @@ class _ScheduleIndex {
   final Map<String, List<_StopTime>> byStop;
   final Map<String, Map<String, String>> trips;
   final Map<String, Duration> tripStart; // time at first stop
+  final Map<String, Duration> tripEnd; // time at last stop
   final Map<String, int> tripLastSeq;
   final Map<String, String> tripLastStop;
   final Map<String, List<_Freq>> freqs;
@@ -46,14 +50,15 @@ class _ScheduleIndex {
 }
 
 class TransitRepository {
-  TransitRepository(this._api);
+  TransitRepository(this._api, {AdvisoryService? advisories})
+      : _advisories = advisories ?? AdvisoryService();
+
   final TransitApi _api;
+  final AdvisoryService _advisories;
 
   List<Station>? _stations;
   List<TransitRoute>? _routes;
 
-  /// Read [file] from every feed that ships it (e.g. 'trips.txt',
-  /// 'stop_times.txt'). Falls back silently for feeds missing the file.
   Future<List<Map<String, String>>> _readAll(String file) async {
     final out = <Map<String, String>>[];
     out.addAll(await _api.readTable(file));
@@ -138,11 +143,8 @@ class TransitRepository {
       (await getStations()).where((s) => s.routeId == routeId).toList();
 
   /// Shape polylines for [routeId] (lon/lat), keyed by shape_id and ordered
-  /// by shape_pt_sequence. A route usually has two (one per direction).
-  ///
-  /// KTMB ships no shapes.txt, so when a route has no explicit geometry we
-  /// derive a polyline from the ordered stop sequence of a representative
-  /// trip per direction.
+  /// by shape_pt_sequence. KTMB ships no shapes.txt, so geometry is derived
+  /// from the stop sequence of a representative trip per direction.
   Future<Map<String, List<({double lng, double lat})>>> getShapesForRoute(
       String routeId) async {
     final shapeIds = <String>{};
@@ -245,6 +247,7 @@ class TransitRepository {
 
     final byStop = <String, List<_StopTime>>{};
     final tripStart = <String, Duration>{};
+    final tripEnd = <String, Duration>{};
     final firstSeq = <String, int>{};
     final lastSeq = <String, int>{};
     final lastStop = <String, String>{};
@@ -267,6 +270,7 @@ class TransitRepository {
       if (ls == null || seq > ls) {
         lastSeq[tid] = seq;
         lastStop[tid] = sid;
+        tripEnd[tid] = time;
       }
     }
 
@@ -290,6 +294,7 @@ class TransitRepository {
       byStop: byStop,
       trips: trips,
       tripStart: tripStart,
+      tripEnd: tripEnd,
       tripLastSeq: lastSeq,
       tripLastStop: lastStop,
       freqs: freqs,
@@ -377,6 +382,175 @@ class TransitRepository {
 
     result.sort((a, b) => a.time.compareTo(b.time));
     return result.take(limit).toList();
+  }
+
+  // ───────────────────────── Service status ─────────────────────────
+
+  /// Advisories that are active at [now].
+  Future<List<Advisory>> getAdvisories({DateTime? now}) async {
+    final t = now ?? DateTime.now();
+    final all = await _advisories.load();
+    return all.where((a) => a.activeAt(t)).toList();
+  }
+
+  Future<ServiceStatus> getServiceStatus(
+      TransitRoute route, {
+        DateTime? now,
+      }) async {
+    final t = now ?? DateTime.now();
+    final idx = await _schedule();
+    final adv = [
+      for (final a in await getAdvisories(now: t))
+        if (a.appliesTo(route.id)) a,
+    ];
+    return _computeStatus(route, idx, t, adv);
+  }
+
+  Future<List<ServiceStatus>> getServiceStatuses({DateTime? now}) async {
+    final t = now ?? DateTime.now();
+    final idx = await _schedule();
+    final adv = await getAdvisories(now: t);
+    final routes = await getRoutes();
+    return [
+      for (final r in routes)
+        _computeStatus(r, idx, t, [
+          for (final a in adv)
+            if (a.appliesTo(r.id)) a,
+        ]),
+    ];
+  }
+
+  ServiceStatus _computeStatus(
+      TransitRoute route,
+      _ScheduleIndex idx,
+      DateTime now,
+      List<Advisory> advisories,
+      ) {
+    final nowOff = Duration(
+      hours: now.hour,
+      minutes: now.minute,
+      seconds: now.second,
+    );
+
+    final windows = <_Freq>[];
+    final departures = <Duration>[];
+    Duration? first;
+    Duration? last;
+
+    for (final e in idx.trips.entries) {
+      final trip = e.value;
+      if (trip['route_id'] != route.id) continue;
+      if (!_runsOn(trip['service_id'] ?? '', now)) continue;
+
+      Duration a;
+      Duration b;
+      final f = idx.freqs[e.key];
+      if (f != null && f.isNotEmpty) {
+        windows.addAll(f);
+        a = f.first.start;
+        b = f.first.end;
+        for (final w in f) {
+          if (w.start < a) a = w.start;
+          if (w.end > b) b = w.end;
+        }
+      } else {
+        final s = idx.tripStart[e.key];
+        final en = idx.tripEnd[e.key];
+        if (s == null || en == null) continue;
+        departures.add(s);
+        a = s;
+        b = en;
+      }
+      if (first == null || a < first) first = a;
+      if (last == null || b > last) last = b;
+    }
+
+    ServiceLevel level;
+    String headline;
+    String? detail;
+    int? hMin;
+    int? hMax;
+
+    final f0 = first;
+    final l0 = last;
+    if (f0 == null || l0 == null) {
+      level = ServiceLevel.closed;
+      headline = 'No trains scheduled today';
+      detail = null;
+    } else {
+      // After midnight, "now" is compared against the service day's
+      // 24h+ times (e.g. a 00:30 last train is stored as 24:30).
+      final cmp = (now.hour < 4 && l0 >= const Duration(hours: 24))
+          ? nowOff + const Duration(hours: 24)
+          : nowOff;
+
+      if (cmp < f0) {
+        level = ServiceLevel.closed;
+        headline = 'Not in service yet';
+        detail = 'First train at ${ServiceStatus.clock(f0)}';
+      } else if (cmp > l0) {
+        level = ServiceLevel.closed;
+        headline = 'Service has ended for today';
+        detail = 'Last train around ${ServiceStatus.clock(l0)}';
+      } else if (windows.isNotEmpty) {
+        final current =
+        windows.where((w) => cmp >= w.start && cmp < w.end).toList();
+        if (current.isEmpty) {
+          level = ServiceLevel.normal;
+          headline = 'Running';
+          detail = null;
+        } else {
+          int mins(_Freq w) => (w.headwaySecs / 60).round();
+          final lo = current.map(mins).reduce((x, y) => x < y ? x : y);
+          final hi = current.map(mins).reduce((x, y) => x > y ? x : y);
+          final best = windows.map(mins).reduce((x, y) => x < y ? x : y);
+          hMin = lo;
+          hMax = hi;
+          final off = lo > best;
+          level = off ? ServiceLevel.offPeak : ServiceLevel.normal;
+          headline = off ? 'Off-peak service' : 'Running normally';
+          detail = hMin == hMax
+              ? 'A train every $lo min'
+              : 'A train every $lo–$hi min';
+        }
+      } else {
+        // Timetable-based (KTMB): show the next departure from the origin.
+        Duration? next;
+        for (final d in departures) {
+          if (d >= cmp && (next == null || d < next)) next = d;
+        }
+        level = ServiceLevel.normal;
+        headline = 'Trains in service';
+        detail = next == null
+            ? 'No more departures from the origin station today'
+            : 'Next departure at ${ServiceStatus.clock(next)}';
+      }
+    }
+
+    // Published advisories override the timetable-derived status.
+    final blocking =
+    advisories.where((a) => a.severity != AdvisorySeverity.info).toList();
+    if (blocking.isNotEmpty) {
+      final worst = blocking.firstWhere(
+            (a) => a.severity == AdvisorySeverity.disruption,
+        orElse: () => blocking.first,
+      );
+      level = ServiceLevel.advisory;
+      headline = worst.title;
+      if (worst.message.isNotEmpty) detail = worst.message;
+    }
+
+    return ServiceStatus(
+      route: route,
+      level: level,
+      headline: headline,
+      detail: detail,
+      headwayMin: hMin,
+      headwayMax: hMax,
+      firstTrain: first,
+      lastTrain: last,
+      advisories: advisories,
+    );
   }
 
   // ───────────────────────── Live vehicles ─────────────────────────

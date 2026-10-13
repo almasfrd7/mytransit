@@ -2,19 +2,23 @@ import 'package:flutter/material.dart';
 
 import '../../models/arrival.dart';
 import '../../models/route.dart';
+import '../../models/service_status.dart';
 import '../../models/station.dart';
 import '../../repositories/transit_repositories.dart';
 import '../../services/favourites_store.dart';
 import '../../services/location_api.dart';
 import '../../services/transit_api.dart';
+import '../../theme.dart';
 import '../../widgets/live_clock.dart';
 import '../../widgets/station_card.dart';
+import '../../widgets/ui.dart';
 import '../live_track/live_track_screen.dart';
+import '../service_status/service_status_screen.dart';
 import '../settings/settings_screen.dart';
 import '../station/station_detail_screen.dart';
 import '../train_list/train_list_screen.dart';
 
-/// Landing screen: quick links, favourites and nearby stations.
+/// Landing screen: status banner, quick links, favourites and nearby.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -53,6 +57,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _repo = TransitRepository(TransitApi());
   final _location = LocationApi();
   late final Future<_HomeData> _data = _load();
+  late Future<List<ServiceStatus>> _statuses = _repo.getServiceStatuses();
 
   _NearbyState _nearbyState = _NearbyState.idle;
   List<_Nearby> _nearby = const [];
@@ -63,6 +68,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _push(Widget screen) => Navigator.of(context)
       .push(MaterialPageRoute<void>(builder: (_) => screen));
+
+  Future<void> _openStatus() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => ServiceStatusScreen(repo: _repo),
+    ));
+    if (mounted) setState(() => _statuses = _repo.getServiceStatuses());
+  }
 
   void _openStation(_HomeData d, Station s) {
     _push(StationDetailScreen(
@@ -107,7 +119,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _nearbyError = e.message;
         _nearbyState = _NearbyState.error;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _nearbyError = 'Could not get your location.';
@@ -123,98 +135,34 @@ class _HomeScreenState extends State<HomeScreen> {
     return 'Good evening';
   }
 
-  static String _distance(double m) =>
-      m < 1000 ? '${m.round()} m away' : '${(m / 1000).toStringAsFixed(1)} km away';
+  static String _distance(double m) => m < 1000
+      ? '${m.round()} m away'
+      : '${(m / 1000).toStringAsFixed(1)} km away';
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          const SliverAppBar.large(title: Text('MyTransit')),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-              child: Text(
-                _greeting,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(color: cs.onSurfaceVariant),
-              ),
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _hero(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+              child: _actions(),
             ),
-          ),
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: LiveClock(),
-            ),
-          ),
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-              child: _SectionLabel('Explore'),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _HeroTile(
-                icon: Icons.train_rounded,
-                title: 'Train list',
-                subtitle: 'Every station, line and schedule',
-                color: cs.primaryContainer,
-                onColor: cs.onPrimaryContainer,
-                onTap: () => _push(TrainListScreen(repo: _repo)),
-              ),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 12)),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _NavTile(
-                      icon: Icons.satellite_alt_rounded,
-                      title: 'Live track',
-                      subtitle: 'Follow trains on the line',
-                      color: cs.tertiaryContainer,
-                      onColor: cs.onTertiaryContainer,
-                      onTap: () => _push(LiveTrackScreen(repo: _repo)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _NavTile(
-                      icon: Icons.settings_rounded,
-                      title: 'Settings',
-                      subtitle: 'Appearance and app info',
-                      color: cs.secondaryContainer,
-                      onColor: cs.onSecondaryContainer,
-                      onTap: () => _push(const SettingsScreen()),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: FutureBuilder<_HomeData>(
+            FutureBuilder<_HomeData>(
               future: _data,
               builder: (context, snap) {
                 final d = snap.data;
                 return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (d != null) _favourites(d),
                       if (d != null) _nearbySection(d),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 20),
                       _NetworkCard(
                         data: d,
                         failed: snap.hasError,
@@ -225,8 +173,94 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Hero ──
+
+  Widget _hero() {
+    return GradientHeader(
+      bottomRadius: 36,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'MyTransit',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.3,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.all(9),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.train_rounded,
+                    color: Colors.white, size: 20),
+              ),
+            ],
           ),
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          const SizedBox(height: 20),
+          Text(_greeting,
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.85),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500)),
+          const SizedBox(height: 4),
+          const LiveClock(onGradient: true),
+          const SizedBox(height: 20),
+          _StatusBanner(future: _statuses, onTap: _openStatus),
+        ],
+      ),
+    );
+  }
+
+  // ── Quick actions ──
+
+  Widget _actions() {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: _ActionTile(
+              icon: Icons.train_rounded,
+              title: 'Train list',
+              subtitle: 'Stations and timetables',
+              colors: const [Brand.indigo, Brand.violet],
+              onTap: () => _push(TrainListScreen(repo: _repo)),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _ActionTile(
+              icon: Icons.satellite_alt_rounded,
+              title: 'Live track',
+              subtitle: 'Trains on the map',
+              colors: const [Brand.teal, Brand.mint],
+              onTap: () => _push(LiveTrackScreen(repo: _repo)),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _ActionTile(
+              icon: Icons.tune_rounded,
+              title: 'Settings',
+              subtitle: 'Theme and app info',
+              colors: const [Brand.amber, Brand.orange],
+              onTap: () => _push(const SettingsScreen()),
+            ),
+          ),
         ],
       ),
     );
@@ -246,12 +280,12 @@ class _HomeScreenState extends State<HomeScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 16),
-            const _SectionLabel('Favourites'),
-            const SizedBox(height: 8),
+            const SizedBox(height: 24),
+            const SectionHeader('Favourites'),
+            const SizedBox(height: 10),
             for (final s in stations)
               Padding(
-                padding: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.only(bottom: 8),
                 child: StationCard(
                   station: s,
                   route: d.routesById[s.routeId],
@@ -275,28 +309,20 @@ class _HomeScreenState extends State<HomeScreen> {
     switch (_nearbyState) {
       case _NearbyState.idle:
       case _NearbyState.error:
-        body = Card(
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          color: cs.surfaceContainerLow,
-          shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (_nearbyError != null) ...[
-                  Text(_nearbyError!, style: TextStyle(color: cs.error)),
-                  const SizedBox(height: 10),
-                ],
-                FilledButton.tonalIcon(
-                  onPressed: _findNearby,
-                  icon: const Icon(Icons.my_location),
-                  label: const Text('Find stations near me'),
-                ),
+        body = AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (_nearbyError != null) ...[
+                Text(_nearbyError!, style: TextStyle(color: cs.error)),
+                const SizedBox(height: 10),
               ],
-            ),
+              FilledButton.tonalIcon(
+                onPressed: _findNearby,
+                icon: const Icon(Icons.my_location),
+                label: const Text('Find stations near me'),
+              ),
+            ],
           ),
         );
       case _NearbyState.loading:
@@ -309,7 +335,7 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             for (final n in _nearby)
               Padding(
-                padding: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.only(bottom: 8),
                 child: StationCard(
                   station: n.station,
                   route: d.routesById[n.station.routeId],
@@ -324,19 +350,18 @@ class _HomeScreenState extends State<HomeScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            const Expanded(child: _SectionLabel('Nearby stations')),
-            if (_nearbyState == _NearbyState.ready)
-              IconButton(
-                tooltip: 'Refresh location',
-                icon: const Icon(Icons.refresh),
-                onPressed: _findNearby,
-              ),
-          ],
+        const SizedBox(height: 24),
+        SectionHeader(
+          'Nearby stations',
+          trailing: _nearbyState == _NearbyState.ready
+              ? IconButton(
+            tooltip: 'Refresh location',
+            icon: const Icon(Icons.refresh),
+            onPressed: _findNearby,
+          )
+              : null,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         body,
       ],
     );
@@ -344,6 +369,141 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 // ───────────────────────── Pieces ─────────────────────────
+
+/// Frosted network-wide status strip that opens the status screen.
+class _StatusBanner extends StatelessWidget {
+  const _StatusBanner({required this.future, required this.onTap});
+  final Future<List<ServiceStatus>> future;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<ServiceStatus>>(
+      future: future,
+      builder: (context, snap) {
+        String title;
+        String? sub;
+        IconData icon;
+        Color iconColor;
+
+        if (snap.hasError) {
+          title = 'Service status unavailable';
+          sub = 'Tap to retry';
+          icon = Icons.cloud_off_rounded;
+          iconColor = Colors.white;
+        } else if (!snap.hasData) {
+          title = 'Checking service…';
+          sub = null;
+          icon = Icons.hourglass_top_rounded;
+          iconColor = Colors.white;
+        } else {
+          final s = NetworkSummary(snap.data!);
+          title = s.headline;
+          sub = s.subline;
+          icon = s.hasAdvisory
+              ? Icons.warning_amber_rounded
+              : s.active == 0
+              ? Icons.bedtime_rounded
+              : Icons.check_circle_rounded;
+          iconColor = s.hasAdvisory
+              ? const Color(0xFFFFD166)
+              : s.active == 0
+              ? Colors.white
+              : const Color(0xFF86EFAC);
+        }
+
+        return Material(
+          color: Colors.white.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(18),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  Icon(icon, color: iconColor, size: 26),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 15)),
+                        if (sub != null)
+                          Text(sub,
+                              style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                  fontSize: 12.5)),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, color: Colors.white),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.colors,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final List<Color> colors;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AppCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: colors,
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: Colors.white, size: 24),
+          ),
+          const SizedBox(height: 12),
+          Text(title,
+              style:
+              const TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5)),
+          const SizedBox(height: 2),
+          Text(subtitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 11.5, height: 1.25, color: cs.onSurfaceVariant)),
+        ],
+      ),
+    );
+  }
+}
 
 class _NextMinutes extends StatelessWidget {
   const _NextMinutes({required this.repo, required this.station});
@@ -357,7 +517,7 @@ class _NextMinutes extends StatelessWidget {
           routeId: station.routeId, limit: 1),
       builder: (context, snap) {
         final cs = Theme.of(context).colorScheme;
-        String text = '';
+        var text = '';
         if (snap.connectionState == ConnectionState.done) {
           final a = snap.data?.firstOrNull;
           if (a == null) {
@@ -375,149 +535,9 @@ class _NextMinutes extends StatelessWidget {
           style: Theme.of(context)
               .textTheme
               .titleSmall
-              ?.copyWith(fontWeight: FontWeight.w700, color: cs.primary),
+              ?.copyWith(fontWeight: FontWeight.w800, color: cs.primary),
         );
       },
-    );
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Text(
-    text,
-    style: Theme.of(context)
-        .textTheme
-        .titleMedium
-        ?.copyWith(fontWeight: FontWeight.w600),
-  );
-}
-
-class _HeroTile extends StatelessWidget {
-  const _HeroTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.color,
-    required this.onColor,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final Color color;
-  final Color onColor;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: color,
-      clipBehavior: Clip.antiAlias,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 26,
-                backgroundColor: onColor.withValues(alpha: 0.15),
-                child: Icon(icon, color: onColor, size: 28),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: onColor,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: onColor.withValues(alpha: 0.8),
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(Icons.chevron_right, color: onColor),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavTile extends StatelessWidget {
-  const _NavTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.color,
-    required this.onColor,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final Color color;
-  final Color onColor;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: color,
-      clipBehavior: Clip.antiAlias,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, color: onColor, size: 26),
-              const SizedBox(height: 14),
-              Text(
-                title,
-                style: TextStyle(
-                  color: onColor,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: onColor.withValues(alpha: 0.8),
-                  fontSize: 12.5,
-                  height: 1.3,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
@@ -539,66 +559,61 @@ class _NetworkCard extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final d = data;
 
-    return Card(
-      elevation: 0,
-      margin: EdgeInsets.zero,
-      color: cs.surfaceContainerLow,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: InkWell(
-        onTap: onOpen,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Icon(Icons.alt_route_rounded, color: cs.primary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    return AppCard(
+      onTap: onOpen,
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: cs.primary.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.alt_route_rounded, color: cs.primary, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Klang Valley + KTMB rail network',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  failed
+                      ? 'Feed unavailable'
+                      : d == null
+                      ? 'Loading feed…'
+                      : '${d.routes.length} lines · '
+                      '${d.stations.length} stations',
+                  style: TextStyle(fontSize: 12.5, color: cs.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          if (d != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: SizedBox(
+                width: 44,
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
                   children: [
-                    Text(
-                      'Klang Valley + KTMB rail network',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
+                    for (final r in d.routes.take(8))
+                      CircleAvatar(
+                        radius: 5,
+                        backgroundColor: Color(r.colorValue),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      failed
-                          ? 'Feed unavailable'
-                          : d == null
-                          ? 'Loading feed…'
-                          : '${d.routes.length} lines · '
-                          '${d.stations.length} stations',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: cs.onSurfaceVariant,
-                      ),
-                    ),
                   ],
                 ),
               ),
-              if (d != null)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Wrap(
-                    spacing: 4,
-                    runSpacing: 4,
-                    children: [
-                      for (final r in d.routes.take(6))
-                        CircleAvatar(
-                          radius: 5,
-                          backgroundColor: Color(r.colorValue),
-                        ),
-                    ],
-                  ),
-                ),
-              const SizedBox(width: 8),
-              Icon(Icons.chevron_right, color: cs.outline),
-            ],
-          ),
-        ),
+            ),
+          const SizedBox(width: 4),
+          Icon(Icons.chevron_right, color: cs.outline),
+        ],
       ),
     );
   }

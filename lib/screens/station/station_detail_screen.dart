@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 
 import '../../models/arrival.dart';
 import '../../models/route.dart';
+import '../../models/service_status.dart';
 import '../../models/station.dart';
 import '../../repositories/transit_repositories.dart';
 import '../../services/favourites_store.dart';
 import '../../widgets/live_clock.dart';
+import '../../widgets/ui.dart';
 
-/// One station: details, interchanges and the next scheduled trains.
+/// One station: details, line status, interchanges and the next trains.
 class StationDetailScreen extends StatefulWidget {
   const StationDetailScreen({
     super.key,
@@ -34,7 +36,8 @@ class StationDetailScreen extends StatefulWidget {
 
 class _StationDetailScreenState extends State<StationDetailScreen> {
   late Future<List<Arrival>> _arrivals = _fetch();
-  Timer? _timer; // refetches arrivals
+  late Future<ServiceStatus>? _status = _fetchStatus();
+  Timer? _timer; // refetches arrivals + status
   Timer? _tick; // refreshes the "x min" labels every second
 
   Future<List<Arrival>> _fetch() => widget.repo.getNextArrivals(
@@ -43,11 +46,20 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
     limit: 6,
   );
 
+  Future<ServiceStatus>? _fetchStatus() => widget.route == null
+      ? null
+      : widget.repo.getServiceStatus(widget.route!);
+
   @override
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) setState(() => _arrivals = _fetch());
+      if (mounted) {
+        setState(() {
+          _arrivals = _fetch();
+          _status = _fetchStatus();
+        });
+      }
     });
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
@@ -77,16 +89,20 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
     final s = widget.station;
     final r = widget.route;
     final color = r != null ? Color(r.colorValue) : cs.primary;
-    final onColor = r != null ? Color(r.textColorValue) : cs.onPrimary;
+    final onColor = routeOnColor(r, cs.onPrimary);
 
     return Scaffold(
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
             pinned: true,
-            expandedHeight: 170,
+            expandedHeight: 200,
             backgroundColor: color,
             foregroundColor: onColor,
+            surfaceTintColor: Colors.transparent,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
+            ),
             actions: [
               ListenableBuilder(
                 listenable: FavouritesStore.instance,
@@ -107,23 +123,33 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
                 s.name.trim(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style:
-                TextStyle(color: onColor, fontWeight: FontWeight.bold),
+                style: TextStyle(color: onColor, fontWeight: FontWeight.w800),
               ),
               background: Container(
                 decoration: BoxDecoration(
+                  borderRadius: const BorderRadius.vertical(
+                      bottom: Radius.circular(28)),
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [color, color.withValues(alpha: 0.75)],
+                    colors: [color, color.withValues(alpha: 0.72)],
                   ),
                 ),
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 56),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 64),
                 alignment: Alignment.bottomLeft,
-                child: Text(
-                  '${r?.longName ?? s.category} · ${s.id}',
-                  style: TextStyle(
-                      color: onColor.withValues(alpha: 0.9), fontSize: 14),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${r?.longName ?? s.category} · ${s.id}',
+                      style: TextStyle(
+                          color: onColor.withValues(alpha: 0.9),
+                          fontSize: 14),
+                    ),
+                    const SizedBox(height: 8),
+                    _headerStatus(onColor),
+                  ],
                 ),
               ),
             ),
@@ -133,6 +159,7 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
             sliver: SliverList.list(
               children: [
                 const LiveClock(),
+                _advisories(),
                 const SizedBox(height: 16),
                 Wrap(
                   spacing: 8,
@@ -152,8 +179,8 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
                 ),
                 if (widget.interchanges.isNotEmpty) ...[
                   const SizedBox(height: 24),
-                  const _SectionTitle('Interchange'),
-                  const SizedBox(height: 8),
+                  const SectionHeader('Interchange'),
+                  const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
@@ -174,78 +201,13 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
                   ),
                 ],
                 const SizedBox(height: 24),
-                const _SectionTitle('Next trains'),
+                const SectionHeader('Next trains'),
                 const SizedBox(height: 2),
                 Text('Scheduled times, not live',
                     style:
                     TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
                 const SizedBox(height: 12),
-                FutureBuilder<List<Arrival>>(
-                  future: _arrivals,
-                  builder: (context, snap) {
-                    if (snap.hasError && !snap.hasData) {
-                      return Text('Could not load arrivals: ${snap.error}');
-                    }
-                    if (!snap.hasData) {
-                      return const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Center(child: CircularProgressIndicator()),
-                      );
-                    }
-                    final list = snap.data!;
-                    if (list.isEmpty) {
-                      return Card(
-                        elevation: 0,
-                        color: cs.surfaceContainerLow,
-                        child: const Padding(
-                          padding: EdgeInsets.all(20),
-                          child: Text('No more scheduled trips today.'),
-                        ),
-                      );
-                    }
-                    final next = list.first;
-                    final rest = list.skip(1).toList();
-                    return Column(
-                      children: [
-                        _NextTrainCard(
-                          arrival: next,
-                          minutes: _minsLabel(next),
-                          color: color,
-                          onColor: onColor,
-                        ),
-                        if (rest.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Card(
-                            elevation: 0,
-                            margin: EdgeInsets.zero,
-                            color: cs.surfaceContainerLow,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                            child: Column(
-                              children: [
-                                for (var i = 0; i < rest.length; i++) ...[
-                                  if (i > 0)
-                                    const Divider(height: 1, indent: 16),
-                                  ListTile(
-                                    leading: const Icon(Icons.train_outlined),
-                                    title: Text(rest[i].headsign),
-                                    subtitle: Text(rest[i].label),
-                                    trailing: Text(
-                                      _minsLabel(rest[i]),
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ],
-                      ],
-                    );
-                  },
-                ),
+                _arrivalsView(cs, color, onColor),
               ],
             ),
           ),
@@ -253,20 +215,119 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
       ),
     );
   }
-}
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
-  final String text;
+  Widget _headerStatus(Color onColor) {
+    return FutureBuilder<ServiceStatus>(
+      future: _status,
+      builder: (context, snap) {
+        final st = snap.data;
+        if (st == null) return const SizedBox(height: 26);
+        final label = statusLabel(st) +
+            (st.headwayLabel != null ? ' · ${st.headwayLabel}' : '');
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: onColor.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(st.level.icon, size: 14, color: onColor),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: TextStyle(
+                      color: onColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700)),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
-  @override
-  Widget build(BuildContext context) => Text(
-    text,
-    style: Theme.of(context)
-        .textTheme
-        .titleMedium
-        ?.copyWith(fontWeight: FontWeight.w600),
-  );
+  Widget _advisories() {
+    return FutureBuilder<ServiceStatus>(
+      future: _status,
+      builder: (context, snap) {
+        final st = snap.data;
+        if (st == null || st.advisories.isEmpty) return const SizedBox.shrink();
+        return Column(
+          children: [
+            const SizedBox(height: 16),
+            for (final a in st.advisories)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: AdvisoryCard(advisory: a),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _arrivalsView(ColorScheme cs, Color color, Color onColor) {
+    return FutureBuilder<List<Arrival>>(
+      future: _arrivals,
+      builder: (context, snap) {
+        if (snap.hasError && !snap.hasData) {
+          return Text('Could not load arrivals: ${snap.error}');
+        }
+        if (!snap.hasData) {
+          return const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final list = snap.data!;
+        if (list.isEmpty) {
+          return const AppCard(
+            child: Text('No more scheduled trips today.'),
+          );
+        }
+        final next = list.first;
+        final rest = list.skip(1).toList();
+        return Column(
+          children: [
+            _NextTrainCard(
+              arrival: next,
+              minutes: _minsLabel(next),
+              color: color,
+              onColor: onColor,
+            ),
+            if (rest.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              AppCard(
+                padding: EdgeInsets.zero,
+                child: Column(
+                  children: [
+                    for (var i = 0; i < rest.length; i++) ...[
+                      if (i > 0) const Divider(indent: 16),
+                      ListTile(
+                        leading: Icon(Icons.train_outlined, color: cs.primary),
+                        title: Text(rest[i].headsign,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w600)),
+                        subtitle: Text(rest[i].label),
+                        trailing: Text(
+                          _minsLabel(rest[i]),
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
 }
 
 class _NextTrainCard extends StatelessWidget {
@@ -287,8 +348,19 @@ class _NextTrainCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [color, color.withValues(alpha: 0.78)],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.30),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Row(
         children: [
@@ -300,13 +372,14 @@ class _NextTrainCard extends StatelessWidget {
                     style: TextStyle(
                         color: onColor.withValues(alpha: 0.8),
                         fontSize: 12,
+                        fontWeight: FontWeight.w700,
                         letterSpacing: 1.2)),
                 const SizedBox(height: 6),
                 Text(arrival.headsign,
                     style: TextStyle(
                         color: onColor,
                         fontSize: 16,
-                        fontWeight: FontWeight.w600)),
+                        fontWeight: FontWeight.w700)),
                 const SizedBox(height: 4),
                 Text('Scheduled ${arrival.label}',
                     style: TextStyle(color: onColor.withValues(alpha: 0.85))),
@@ -318,7 +391,7 @@ class _NextTrainCard extends StatelessWidget {
             style: TextStyle(
               color: onColor,
               fontSize: 36,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ],

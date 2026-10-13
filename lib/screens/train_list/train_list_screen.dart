@@ -1,12 +1,11 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../../models/route.dart';
 import '../../models/station.dart';
 import '../../repositories/transit_repositories.dart';
 import '../../services/transit_api.dart';
-import '../../widgets/live_clock.dart';
+import '../../widgets/station_card.dart';
+import '../../widgets/ui.dart';
 import '../station/station_detail_screen.dart';
 
 /// Searchable list of every station, grouped by line.
@@ -20,8 +19,6 @@ class TrainListScreen extends StatefulWidget {
   State<TrainListScreen> createState() => _TrainListScreenState();
 }
 
-// ───────────────────────── Data ─────────────────────────
-
 class _Data {
   final List<TransitRoute> routes;
   final List<Station> stations;
@@ -34,7 +31,7 @@ class _Data {
   /// Other stops with the same name (interchanges), excluding [s] itself.
   List<Station> interchangesOf(Station s) => stations
       .where((o) =>
-          o.id != s.id && o.name.toUpperCase() == s.name.toUpperCase())
+  o.id != s.id && o.name.toUpperCase() == s.name.toUpperCase())
       .toList();
 }
 
@@ -43,8 +40,6 @@ class _Header {
   final int count;
   _Header(this.route, this.count);
 }
-
-// ───────────────────────── Screen ─────────────────────────
 
 class _TrainListScreenState extends State<TrainListScreen> {
   late final TransitRepository _repo =
@@ -82,14 +77,14 @@ class _TrainListScreenState extends State<TrainListScreen> {
     final q = _query.trim().toUpperCase();
     bool match(Station s) =>
         q.isEmpty ||
-        s.name.toUpperCase().contains(q) ||
-        s.id.toUpperCase().contains(q);
+            s.name.toUpperCase().contains(q) ||
+            s.id.toUpperCase().contains(q);
 
     final items = <Object>[];
     for (final r in d.routes) {
       if (_routeFilter != null && _routeFilter != r.id) continue;
       final list =
-          d.stations.where((s) => s.routeId == r.id && match(s)).toList();
+      d.stations.where((s) => s.routeId == r.id && match(s)).toList();
       if (list.isEmpty) continue;
       items.add(_Header(r, list.length));
       items.addAll(list);
@@ -131,19 +126,12 @@ class _TrainListScreenState extends State<TrainListScreen> {
           body: CustomScrollView(
             slivers: [
               const SliverAppBar.large(title: Text('Train list')),
-              const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-                  child: LiveClock(),
-                ),
-              ),
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                   child: SearchBar(
                     controller: _searchCtrl,
                     hintText: 'Search stations',
-                    elevation: const WidgetStatePropertyAll(0),
                     leading: const Icon(Icons.search),
                     trailing: [
                       if (_query.isNotEmpty)
@@ -161,7 +149,7 @@ class _TrainListScreenState extends State<TrainListScreen> {
               ),
               SliverToBoxAdapter(
                 child: SizedBox(
-                  height: 48,
+                  height: 46,
                   child: ListView(
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -186,8 +174,8 @@ class _TrainListScreenState extends State<TrainListScreen> {
                             label: Text(r.shortName),
                             selected: _routeFilter == r.id,
                             onSelected: (_) => setState(() =>
-                                _routeFilter =
-                                    _routeFilter == r.id ? null : r.id),
+                            _routeFilter =
+                            _routeFilter == r.id ? null : r.id),
                           ),
                         ),
                     ],
@@ -206,10 +194,14 @@ class _TrainListScreenState extends State<TrainListScreen> {
                     final item = items[i];
                     if (item is _Header) return _LineHeader(header: item);
                     final s = item as Station;
-                    return _StationCard(
-                      station: s,
-                      route: data.routesById[s.routeId],
-                      onTap: () => _openStation(data, s),
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 3),
+                      child: StationCard(
+                        station: s,
+                        route: data.routesById[s.routeId],
+                        onTap: () => _openStation(data, s),
+                      ),
                     );
                   },
                 ),
@@ -259,7 +251,7 @@ class _LineHeader extends StatelessWidget {
       child: Row(
         children: [
           if (r != null)
-            _LineBadge(route: r)
+            LineBadge(route: r)
           else
             const CircleAvatar(child: Icon(Icons.help_outline)),
           const SizedBox(width: 12),
@@ -269,110 +261,25 @@ class _LineHeader extends StatelessWidget {
               children: [
                 Text(r?.longName ?? 'Other',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        )),
+                      fontWeight: FontWeight.w800,
+                    )),
                 Text(r?.description ?? 'No matching line',
                     style: TextStyle(
                         color: cs.onSurfaceVariant, fontSize: 12)),
               ],
             ),
           ),
-          Text('${header.count}',
-              style: TextStyle(color: cs.onSurfaceVariant)),
-        ],
-      ),
-    );
-  }
-}
-
-class _StationCard extends StatelessWidget {
-  const _StationCard({
-    required this.station,
-    required this.route,
-    required this.onTap,
-  });
-  final Station station;
-  final TransitRoute? route;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final color = route != null ? Color(route!.colorValue) : cs.outline;
-    final onColor =
-        route != null ? Color(route!.textColorValue) : cs.onInverseSurface;
-
-    return Card(
-      elevation: 0,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-      color: cs.surfaceContainerLow,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              Container(
-                constraints: const BoxConstraints(minWidth: 54),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  station.id,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: onColor,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  station.name.trim(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
-              ),
-              if (station.isAccessible)
-                Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: Icon(Icons.accessible,
-                      size: 18, color: cs.onSurfaceVariant),
-                ),
-              Icon(Icons.chevron_right, color: cs.outline),
-            ],
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: cs.primary.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text('${header.count}',
+                style: TextStyle(
+                    color: cs.primary, fontWeight: FontWeight.w700)),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LineBadge extends StatelessWidget {
-  const _LineBadge({required this.route});
-  final TransitRoute route;
-  static const double radius = 20;
-
-  @override
-  Widget build(BuildContext context) {
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: Color(route.colorValue),
-      child: Text(
-        route.shortName,
-        style: TextStyle(
-          color: Color(route.textColorValue),
-          fontSize: radius * 0.5,
-          fontWeight: FontWeight.bold,
-        ),
+        ],
       ),
     );
   }

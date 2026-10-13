@@ -43,3 +43,4 @@ flutter:
     - GTFS/frequencies.txt
     - GTFS/shapes.txt
     - GTFS/ktmb/
+    - assets/advisories.json
