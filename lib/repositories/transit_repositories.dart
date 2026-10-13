@@ -10,6 +10,41 @@ import '../services/transit_api.dart';
 /// wherever they exist.
 const _ktmb = 'ktmb';
 
+class _StopTime {
+  const _StopTime(this.tripId, this.seq, this.time);
+  final String tripId;
+  final int seq;
+  final Duration time;
+}
+
+class _Freq {
+  const _Freq(this.start, this.end, this.headwaySecs);
+  final Duration start;
+  final Duration end;
+  final int headwaySecs;
+}
+
+/// Everything needed to answer "next trains at stop X" without reparsing.
+class _ScheduleIndex {
+  _ScheduleIndex({
+    required this.byStop,
+    required this.trips,
+    required this.tripStart,
+    required this.tripLastSeq,
+    required this.tripLastStop,
+    required this.freqs,
+    required this.stopNames,
+  });
+
+  final Map<String, List<_StopTime>> byStop;
+  final Map<String, Map<String, String>> trips;
+  final Map<String, Duration> tripStart; // time at first stop
+  final Map<String, int> tripLastSeq;
+  final Map<String, String> tripLastStop;
+  final Map<String, List<_Freq>> freqs;
+  final Map<String, String> stopNames;
+}
+
 class TransitRepository {
   TransitRepository(this._api);
   final TransitApi _api;
@@ -39,19 +74,16 @@ class TransitRepository {
     return r;
   }
 
-  Future<List<Station>> getStations() async => _stations ??= await _loadStations();
+  Future<List<Station>> getStations() async =>
+      _stations ??= await _loadStations();
 
   Future<List<Station>> _loadStations() async {
-    // Klang Valley feed: one row per stop already carries route_id/status.
     final rapid = (await _api.readTable('stops.txt'))
         .where((r) => r['status'] == 'valid')
         .map(_fixRow)
         .map(Station.fromRow)
         .toList();
 
-    // KTMB feed: stops.txt has no route_id or status, so derive per-route
-    // rows from which trips (via stop_times) actually call there — matching
-    // the interchange-row pattern of the Klang Valley feed.
     final ktmb = await _loadKtmbStations();
     return [...rapid, ...ktmb];
   }
@@ -88,14 +120,15 @@ class TransitRepository {
     ];
   }
 
-  Future<List<TransitRoute>> getRoutes() async => _routes ??= await _loadRoutes();
+  Future<List<TransitRoute>> getRoutes() async =>
+      _routes ??= await _loadRoutes();
 
   Future<List<TransitRoute>> _loadRoutes() async {
     final rows = await _readAll('routes.txt');
     return rows
         .map((r) => r.containsKey('status')
-            ? r // Klang Valley rows carry their own status/category
-            : {...r, 'status': 'valid', 'category': 'KTM'})
+        ? r
+        : {...r, 'status': 'valid', 'category': 'KTM'})
         .where((r) => r['status'] == 'valid')
         .map(TransitRoute.fromRow)
         .toList();
@@ -120,8 +153,7 @@ class TransitRepository {
     }
 
     if (shapeIds.isNotEmpty) {
-      final points =
-          <String, Map<int, ({double lng, double lat})>>{};
+      final points = <String, Map<int, ({double lng, double lat})>>{};
       for (final p in await _api.readTable('shapes.txt')) {
         final id = p['shape_id'];
         if (id == null || !shapeIds.contains(id)) continue;
@@ -143,8 +175,6 @@ class TransitRepository {
     return _shapesFromStops(routeId);
   }
 
-  /// Derive polylines from stop sequences: pick a representative trip per
-  /// direction and map its ordered stop_ids to coordinates.
   Future<Map<String, List<({double lng, double lat})>>> _shapesFromStops(
       String routeId) async {
     final trips = await _readAll('trips.txt');
@@ -162,7 +192,7 @@ class TransitRepository {
     };
 
     final wanted = repTrip.values.toSet();
-    final legs = <String, Map<int, String>>{}; // trip -> seq -> stop_id
+    final legs = <String, Map<int, String>>{};
     for (final st in await _readAll('stop_times.txt')) {
       final tid = st['trip_id'];
       if (tid == null || !wanted.contains(tid)) continue;
@@ -185,97 +215,197 @@ class TransitRepository {
     return out;
   }
 
-  static String _serviceId(DateTime d) => switch (d.weekday) {
-        DateTime.saturday => 'Sat',
-        DateTime.sunday => 'Sun',
-        _ => 'MonFri',
-      };
+  // ───────────────────────── Schedule ─────────────────────────
+
+  Future<_ScheduleIndex>? _scheduleFuture;
+  Future<_ScheduleIndex> _schedule() => _scheduleFuture ??= _loadSchedule();
+
+  static Duration? _tryTime(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return Arrival.parseTime(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<_ScheduleIndex> _loadSchedule() async {
+    final trips = <String, Map<String, String>>{};
+    for (final t in await _readAll('trips.txt')) {
+      final id = t['trip_id'];
+      if (id != null) trips[id] = t;
+    }
+
+    final stopNames = <String, String>{};
+    for (final s in await _readAll('stops.txt')) {
+      final id = s['stop_id'];
+      final name = s['stop_name'];
+      if (id != null && name != null) stopNames[id] = name.trim();
+    }
+
+    final byStop = <String, List<_StopTime>>{};
+    final tripStart = <String, Duration>{};
+    final firstSeq = <String, int>{};
+    final lastSeq = <String, int>{};
+    final lastStop = <String, String>{};
+
+    for (final st in await _readAll('stop_times.txt')) {
+      final tid = st['trip_id'];
+      final sid = st['stop_id'];
+      final seq = int.tryParse(st['stop_sequence'] ?? '');
+      final time = _tryTime(st['arrival_time']);
+      if (tid == null || sid == null || seq == null || time == null) continue;
+
+      (byStop[sid] ??= []).add(_StopTime(tid, seq, time));
+
+      final fs = firstSeq[tid];
+      if (fs == null || seq < fs) {
+        firstSeq[tid] = seq;
+        tripStart[tid] = time;
+      }
+      final ls = lastSeq[tid];
+      if (ls == null || seq > ls) {
+        lastSeq[tid] = seq;
+        lastStop[tid] = sid;
+      }
+    }
+
+    // Klang Valley lines are defined by headways, not individual trips.
+    final freqs = <String, List<_Freq>>{};
+    try {
+      for (final f in await _api.readTable('frequencies.txt')) {
+        final tid = f['trip_id'];
+        final start = _tryTime(f['start_time']);
+        final end = _tryTime(f['end_time']);
+        final headway = int.tryParse(f['headway_secs'] ?? '');
+        if (tid == null || start == null || end == null) continue;
+        if (headway == null || headway <= 0) continue;
+        (freqs[tid] ??= []).add(_Freq(start, end, headway));
+      }
+    } catch (_) {
+      // No frequencies bundled: fall back to fixed trip times.
+    }
+
+    return _ScheduleIndex(
+      byStop: byStop,
+      trips: trips,
+      tripStart: tripStart,
+      tripLastSeq: lastSeq,
+      tripLastStop: lastStop,
+      freqs: freqs,
+      stopNames: stopNames,
+    );
+  }
+
+  /// Whether a GTFS service id runs on [d]. KTMB uses its own ids.
+  static bool _runsOn(String serviceId, DateTime d) {
+    final weekend = d.weekday >= DateTime.saturday;
+    return switch (serviceId) {
+      'MonFri' || 'komuter_weekday' => !weekend,
+      'Sat' => d.weekday == DateTime.saturday,
+      'Sun' => d.weekday == DateTime.sunday,
+      'komuter_weekend' => weekend,
+      _ => true, // ets, intercity, shuttle_selatan, komuter_utara…
+    };
+  }
 
   /// Next scheduled arrivals at a station (timetable, not live).
+  ///
+  /// Pass [routeId] to only list one line (needed at shared KTMB stops).
   Future<List<Arrival>> getNextArrivals(
       String stopId, {
         DateTime? now,
         int limit = 5,
+        String? routeId,
       }) async {
     now ??= DateTime.now();
-    final service = _serviceId(now);
+    final idx = await _schedule();
     final nowOffset = Duration(
       hours: now.hour,
       minutes: now.minute,
       seconds: now.second,
     );
 
-    final trips = {
-      for (final t in await _readAll('trips.txt'))
-        if (t['service_id'] == service) t['trip_id']!: t,
-    };
-
     final result = <Arrival>[];
-    for (final st in await _readAll('stop_times.txt')) {
-      if (st['stop_id'] != stopId) continue;
-      final trip = trips[st['trip_id']];
+    for (final st in idx.byStop[stopId] ?? const <_StopTime>[]) {
+      final trip = idx.trips[st.tripId];
       if (trip == null) continue;
-      final t = Arrival.parseTime(st['arrival_time']!);
-      if (t < nowOffset) continue;
-      result.add(Arrival(
-        tripId: st['trip_id']!,
-        routeId: trip['route_id']!,
-        headsign: trip['trip_headsign'] ?? '',
-        time: t,
-      ));
+      if (routeId != null && trip['route_id'] != routeId) continue;
+      if (!_runsOn(trip['service_id'] ?? '', now)) continue;
+      // Trains terminating here don't "depart" from this station.
+      if (st.seq == idx.tripLastSeq[st.tripId]) continue;
+
+      var headsign = trip['trip_headsign'] ?? '';
+      if (headsign.isEmpty) {
+        final name = idx.stopNames[idx.tripLastStop[st.tripId]];
+        headsign = name == null ? '' : 'To $name';
+      }
+      final rid = trip['route_id'] ?? '';
+
+      final windows = idx.freqs[st.tripId];
+      if (windows == null) {
+        if (st.time < nowOffset) continue;
+        result.add(Arrival(
+          tripId: st.tripId,
+          routeId: rid,
+          headsign: headsign,
+          time: st.time,
+        ));
+        continue;
+      }
+
+      // Frequency-based: expand the headway windows into concrete times.
+      final offset = st.time - (idx.tripStart[st.tripId] ?? st.time);
+      for (final w in windows) {
+        final gap = Duration(seconds: w.headwaySecs);
+        final sinceStart = nowOffset - offset - w.start;
+        var k = sinceStart.isNegative
+            ? 0
+            : (sinceStart.inSeconds + w.headwaySecs - 1) ~/ w.headwaySecs;
+        for (var n = 0; n < limit; n++, k++) {
+          final runStart = w.start + gap * k;
+          if (runStart >= w.end) break;
+          result.add(Arrival(
+            tripId: st.tripId,
+            routeId: rid,
+            headsign: headsign,
+            time: runStart + offset,
+          ));
+        }
+      }
     }
+
     result.sort((a, b) => a.time.compareTo(b.time));
     return result.take(limit).toList();
   }
 
-  // Live vehicle positions
+  // ───────────────────────── Live vehicles ─────────────────────────
 
   late final GtfsRealtimeService _live = GtfsRealtimeService();
 
-  /// The most recently fetched live positions from the GTFS-Realtime feed.
-  /// Starts as `null`; becomes available after the first poll completes.
   List<VehiclePosition>? get livePositions => _live.positions;
-
-  /// Timestamp of the most recent successful fetch, or `null`.
   DateTime? get lastLiveFetchAt => _live.lastFetchedAt;
-
-  /// The pending fetch error, if the most recent fetch failed.
   Exception? get liveFetchError => _live.fetchError;
 
-  /// Stream of live-position snapshots. Starts emitting once [startLivePolling]
-  /// is called.
   Stream<List<VehiclePosition>> get livePositionsStream =>
       _live.positionsStream;
 
-  /// Start polling the GTFS-Realtime vehicle-position feed.
-  ///
-  /// Polling runs on a 30-second timer (the feed update cadence) and is
-  /// lightweight — it only keeps the most recent snapshot in memory.
   void startLivePolling() => _live.start();
-
-  /// Stop the live feed poller.
   void stopLivePolling() => _live.stop();
-
-  // Static trip index used to resolve live positions to lines.
 
   Map<String, String>? _tripRoute;
 
-  /// `trip_id -> route_id` across all bundled feeds. The KTMB realtime feed
-  /// reports trip ids but no route id, so we join against this.
-  Future<Map<String, String>> getTripRouteIndex() async =>
-      _tripRoute ??= {
-        for (final t in await _readAll('trips.txt'))
-          if (t['trip_id'] != null && t['route_id'] != null)
-            t['trip_id']!: t['route_id']!,
-      };
+  /// `trip_id -> route_id` across all bundled feeds.
+  Future<Map<String, String>> getTripRouteIndex() async => _tripRoute ??= {
+    for (final t in await _readAll('trips.txt'))
+      if (t['trip_id'] != null && t['route_id'] != null)
+        t['trip_id']!: t['route_id']!,
+  };
 
-  /// Resolve [positions] against the static schedule: fill a missing
-  /// [VehiclePosition.routeId] from the trip index, then keep only
-  /// positions whose route exists in [knownRouteIds].
   Future<List<VehiclePosition>> resolvePositions(
-    List<VehiclePosition> positions,
-    Set<String> knownRouteIds,
-  ) async {
+      List<VehiclePosition> positions,
+      Set<String> knownRouteIds,
+      ) async {
     if (positions.isEmpty) return const [];
     final index = await getTripRouteIndex();
     final out = <VehiclePosition>[];

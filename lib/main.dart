@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'screens/home/home_screen.dart';
+import 'services/favourites_store.dart';
 import 'theme.dart';
 
-void main() => runApp(const MyApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await FavouritesStore.instance.load();
+  runApp(const MyApp());
+}
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -23,8 +28,3 @@ class MyApp extends StatelessWidget {
     );
   }
 }
-
-// TODO: expose live polling through a top-level repository so screens don't
-// each create their own TransitRepository(TransitApi()). Once a single repo
-// instance is shared (e.g. a repository locator or Provider), start the KTMB
-// poll in main() and wire live positions into the Live track screen.

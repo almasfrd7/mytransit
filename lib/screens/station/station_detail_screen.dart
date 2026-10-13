@@ -6,6 +6,7 @@ import '../../models/arrival.dart';
 import '../../models/route.dart';
 import '../../models/station.dart';
 import '../../repositories/transit_repositories.dart';
+import '../../services/favourites_store.dart';
 import '../../widgets/live_clock.dart';
 
 /// One station: details, interchanges and the next scheduled trains.
@@ -36,8 +37,11 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
   Timer? _timer; // refetches arrivals
   Timer? _tick; // refreshes the "x min" labels every second
 
-  Future<List<Arrival>> _fetch() =>
-      widget.repo.getNextArrivals(widget.station.id, limit: 6);
+  Future<List<Arrival>> _fetch() => widget.repo.getNextArrivals(
+    widget.station.id,
+    routeId: widget.station.routeId,
+    limit: 6,
+  );
 
   @override
   void initState() {
@@ -83,6 +87,19 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
             expandedHeight: 170,
             backgroundColor: color,
             foregroundColor: onColor,
+            actions: [
+              ListenableBuilder(
+                listenable: FavouritesStore.instance,
+                builder: (context, _) {
+                  final fav = FavouritesStore.instance.contains(s);
+                  return IconButton(
+                    tooltip: fav ? 'Remove favourite' : 'Add favourite',
+                    icon: Icon(fav ? Icons.favorite : Icons.favorite_border),
+                    onPressed: () => FavouritesStore.instance.toggle(s),
+                  );
+                },
+              ),
+            ],
             flexibleSpace: FlexibleSpaceBar(
               titlePadding: const EdgeInsetsDirectional.only(
                   start: 56, bottom: 16, end: 16),
@@ -90,8 +107,8 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
                 s.name.trim(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    color: onColor, fontWeight: FontWeight.bold),
+                style:
+                TextStyle(color: onColor, fontWeight: FontWeight.bold),
               ),
               background: Container(
                 decoration: BoxDecoration(
@@ -145,9 +162,9 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
                         ActionChip(
                           avatar: widget.routesById[o.routeId] != null
                               ? CircleAvatar(
-                                  backgroundColor: Color(
-                                      widget.routesById[o.routeId]!.colorValue),
-                                )
+                            backgroundColor: Color(
+                                widget.routesById[o.routeId]!.colorValue),
+                          )
                               : null,
                           label: Text(
                               '${widget.routesById[o.routeId]?.longName ?? o.routeId} · ${o.id}'),
@@ -160,8 +177,8 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
                 const _SectionTitle('Next trains'),
                 const SizedBox(height: 2),
                 Text('Scheduled times, not live',
-                    style: TextStyle(
-                        fontSize: 12, color: cs.onSurfaceVariant)),
+                    style:
+                    TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
                 const SizedBox(height: 12),
                 FutureBuilder<List<Arrival>>(
                   future: _arrivals,
@@ -244,12 +261,12 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Text(
-        text,
-        style: Theme.of(context)
-            .textTheme
-            .titleMedium
-            ?.copyWith(fontWeight: FontWeight.w600),
-      );
+    text,
+    style: Theme.of(context)
+        .textTheme
+        .titleMedium
+        ?.copyWith(fontWeight: FontWeight.w600),
+  );
 }
 
 class _NextTrainCard extends StatelessWidget {
